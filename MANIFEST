@@ -6,3 +6,4 @@ README
 t/00loadit.t
 t/01Acmes.t
 
+META.yml                                 Module meta-data (added by MakeMaker)

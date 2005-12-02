@@ -3,27 +3,40 @@ package Acme::Octarine;
 use 5.005;
 use strict;
 
-require Acme::Colour;
+use Acme::Colour;
 
 use vars qw($VERSION @Acmes);
-$VERSION = '0.01';
+$VERSION = '0.02';
 
 # I need some hooks in Acme::Colour's constructor. But as we all know cut and
 # paste is bad. So we are good and don't do that:
 
 use B::Deparse;
+use PadWalker 'closed_over';
+
+# Frustratingly, he uses a package lexical %r, which foils a simple re-eval of
+# the deparsed method code.
 my $deparse = B::Deparse->new("-sC");
 my $body = $deparse->coderef2text(\&Acme::Colour::new);
+my $r = closed_over(\&Acme::Colour::new)->{'%r'};
 
-$body
- =~ s/([ \t]+) # Most get the indent correct
-      (return\s*(\$\w+))\s*;?\s* # Probably the last line of the subroutine.
-      }/
-$1my \$sub = \$Acme::Colour::specials{\$colour};
+# Add a my $sub; declaration at the top level
+$body =~ s/([ \t]+)(bless)/$1my \$sub;\n$1$2/ or die $body;
+# If colour is defined, look it up in the specials hash
+$body =~ s/
+  ([ \t]+) # Must get the indent correct
+  (unless[ \t]*\(exists[ \t]*\$r)({\$colour})\)
+  /$1\$sub = \$Acme::Colour::specials{\$colour};
+$1$2->$3 or defined \$sub)/sx or die $body;
+
+# If a specials subroutine was found, call it instead of making a simple return
+$body =~ s/
+  ([ \t]+) # Most get the indent correct
+  (return\s*(\$\w+))\s*;?\s* # Probably the last line of the subroutine.
+}/
 $1$2 unless \$sub; # default behaviour unless we are a special colour
-$1&\$sub ($3);
-}
-/sx;
+$1&\$sub($3);
+}/sx or die $body;
 
 {
   # Turn off warnings.
@@ -36,11 +49,9 @@ require CPANPLUS::Backend;
 # Currently CPANPLUS only supports one backend per program.
 
 my $cp = CPANPLUS::Backend->new;
-$cp->set_conf (verbose=>0);
-my $mod_search = $cp->search(type => 'module',
-				list => ['^Acme::']);
-
-@Acmes = keys %$mod_search;
+$cp->configure_object()->set_conf(verbose=>0);
+@Acmes = map {$_->name} $cp->search(type => 'module',
+				    allow => [qr/^Acme::/]);
 
 sub random_acme_module {
   $Acmes[rand @Acmes];
